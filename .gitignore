@@ -1,0 +1,26 @@
+**__pycache__**
+**build**
+**egg-info**
+.ipynb_checkpoints/
+**dist**
+data/
+*.pyc
+venv/
+*.idea/
+*.so
+# *.yaml
+*.sh
+*.pth
+*.pkl
+*.zip
+*.bin
+output
+version.py
+*.onnx
+*.engine
+core
+*.onnx
+*.so
+*.a
+**TensorRT-10.0.0.6**
+TensorRT-10.0.0.6/
