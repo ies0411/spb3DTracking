@@ -295,6 +295,8 @@ class Spb3DMOT(object):
     def track(self, dets):
 
         # TODO : kitti crop
+        # TODO : association (theta - pcd, giou w size)
+        # TODO : separate high score, low score w beyain
         """
         Params:
                 dets_all: dict
