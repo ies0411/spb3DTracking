@@ -52,7 +52,7 @@ class Spb3DMOT(object):
         self.death_threshold = 0.1
 
     def get_param(  # "greedy"
-        self, algm="hungar", metric="giou_3d", thres=-0.5, min_hits=1, max_age=2
+        self, algm="hungar", metric="eiou", thres=-0.5, min_hits=1, max_age=2
     ):
         # get parameters for each dataset
 

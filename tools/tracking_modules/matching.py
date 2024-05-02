@@ -10,7 +10,6 @@ def compute_affinity(dets, trks, metric, trk_inv_inn_matrices=None):
     aff_matrix = np.zeros((len(dets), len(trks)), dtype=np.float32)
     for d, det in enumerate(dets):
         for t, trk in enumerate(trks):
-
             # choose to use different distance metrics
             if "iou" in metric:
                 dist_now = iou(det, trk, metric)
@@ -25,7 +24,7 @@ def compute_affinity(dets, trks, metric, trk_inv_inn_matrices=None):
             else:
                 assert False, "error"
             aff_matrix[d, t] = dist_now
-
+    # TODO : theta and size, SIou?, embedding 비교(피쳐에서?)?
     return aff_matrix
 
 
@@ -72,7 +71,7 @@ def data_association(
     trks,
     metric,
     threshold,
-    algm="greedy",
+    algm,
     trk_innovation_matrix=None,
     hypothesis=1,
 ):
