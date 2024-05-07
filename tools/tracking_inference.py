@@ -8,7 +8,7 @@ import torch
 import argparse
 import time
 
-
+import copy
 import numpy as np
 import torch
 from pcdet.config import cfg, cfg_from_yaml_file
@@ -17,7 +17,7 @@ from pcdet.models import build_network, load_data_to_gpu
 from pcdet.utils import common_utils
 from tracking_modules.model import Spb3DMOT
 from tracking_modules.utils import Config
-from utils.utils import read_calib
+from utils.utils import read_calib, bb3d_2_bb2d, velo_to_cam, vel_to_cam_pose
 
 
 def parse_config():
@@ -134,12 +134,13 @@ class TrackerDataset(DatasetTemplate):
             lidar[:, 3] = 1
             lidar = np.matmul(lidar, velo_tocam.T)
             img_pts = np.matmul(lidar, P2.T)
-            velo_tocam = np.mat(velo_tocam).I
-            velo_tocam = np.array(velo_tocam)
-            normal = velo_tocam
-            normal = normal[0:3, 0:4]
-            lidar = np.matmul(lidar, normal.T)
-            lidar_copy[:, 0:3] = lidar
+
+            # velo_tocam = np.mat(velo_tocam).I
+            # velo_tocam = np.array(velo_tocam)
+            # normal = velo_tocam
+            # normal = normal[0:3, 0:4]
+            # lidar = np.matmul(lidar, normal.T)
+            # lidar_copy[:, 0:3] = lidar
             x, y = img_pts[:, 0] / img_pts[:, 2], img_pts[:, 1] / img_pts[:, 2]
             mask = np.logical_and(
                 np.logical_and(x >= 0, x < max_col), np.logical_and(y >= 0, y < max_row)
@@ -228,18 +229,28 @@ def main():
                     id_max = max(id_max, tracking_result[0][-1])
                 ID_start_dict[detection_cfg.CLASS_NAMES[int(label) - 1]] = id_max + 1
                 tracking_results_dict[label].append(tracking_result)
-    # print(f"tracking_results_dict : {tracking_results_dict}")
     logger.info(f"tracking time : { time.time()-tracking_time}")
     logger.info("========= logging.. =========")
     Path(args.tracking_output_dir).mkdir(parents=True, exist_ok=True)
 
+    frame_idx = 0  # TODO : change to frame_id
+    P2, V2C = read_calib(os.path.join(args.calib_dir, f"{str(frame_idx).zfill(4)}.txt"))
+
     with open(os.path.join(args.tracking_output_dir, "result.txt"), "w") as f:
         for class_name, tracking_results in tracking_results_dict.items():
-            tracking_results = tracking_results[0]
             for frame_idx, tracking_result in enumerate(tracking_results):
-                # box2d = bb3d_2_bb2d(box, P2)
+                if len(tracking_result) == 0:
+                    continue
+                tracking_result = tracking_result[0]
+                # box[:, 6] = -box[:, 6] - np.pi / 2
+                box = copy.deepcopy(tracking_result)
+                box[:3] = tracking_result[3:6]
+                box[3:6] = tracking_result[:3]
+                box[2] -= box[5] / 2
+                box[:3] = vel_to_cam_pose(box[:3], V2C)
+                box2d = bb3d_2_bb2d(box, P2)
                 f.write(
-                    f"{str(frame_idx)} {detection_cfg.CLASS_NAMES[int(class_name) - 1]} -1 -1 -10 -1 -1 -1 -1 {str(tracking_result[0])} {str(tracking_result[1])} {str(tracking_result[2])} {str(tracking_result[3])} {str(tracking_result[4])} {str(tracking_result[5])} {str(tracking_result[6])} \n"
+                    f"{str(frame_idx)} {str(int(tracking_result[-1]))} {detection_cfg.CLASS_NAMES[int(class_name) - 1]} -1 -1 -10 {box2d[0][0]} {box2d[0][1]} {box2d[0][2]} {box2d[0][3]} {str(tracking_result[0])} {str(tracking_result[1])} {str(tracking_result[2])} {str(tracking_result[3])} {str(tracking_result[4])} {str(tracking_result[5])} {str(tracking_result[6])} \n"
                 )
         # json.dump(tracking_results_dict, f)
     logger.info("========= Finish =========")
