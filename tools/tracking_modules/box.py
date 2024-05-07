@@ -2,7 +2,7 @@ import numpy as np
 from numba import jit
 
 
-@jit(nopython=False)
+@jit
 def rotx(t):
     """Rotation about the x-axis."""
     c = np.cos(t)
@@ -10,7 +10,7 @@ def rotx(t):
     return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
 
 
-@jit(nopython=False)
+@jit
 def roty(t):
     """Rotation about the y-axis."""
     c = np.cos(t)
@@ -18,7 +18,7 @@ def roty(t):
     return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
 
 
-@jit(nopython=False)
+@jit
 def rotz(t):
     """Rotation about the z-axis."""
     c = np.cos(t)
@@ -26,7 +26,7 @@ def rotz(t):
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
 
-@jit(nopython=False)
+@jit
 def transform_from_rot_trans(R, t):
     """Transforation matrix from rotation matrix and translation vector."""
     R = R.reshape(3, 3)
@@ -34,7 +34,7 @@ def transform_from_rot_trans(R, t):
     return np.vstack((np.hstack([R, t]), [0, 0, 0, 1]))
 
 
-@jit(nopython=False)
+@jit
 def _poses_from_oxts(oxts_packets):
     """Helper method to compute SE(3) pose matrices from OXTS packets."""
     # https://github.com/pratikac/kitti/blob/master/pykitti/raw.py

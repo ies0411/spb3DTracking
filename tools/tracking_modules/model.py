@@ -1,16 +1,27 @@
 import copy
-import logging
 
 import numpy as np
+from numba import jit
 
 from .box import Box3D
 from .kalman_filter import KF, UKF, get_bbox_distance
 from .matching import data_association
 
-logger = logging.getLogger("tracking.model")
+
+@jit(nopython=True, cache=True)
+def _within_range(theta):
+    # make sure the orientation is within a proper range
+    if theta >= np.pi:
+        theta -= np.pi * 2  # make the theta stillf in the range
+    if theta < -np.pi:
+        theta += np.pi * 2
+
+    return theta
 
 
+@jit(nopython=True, cache=True)
 def _select_giou_thres(bbox_a, bbox_b):
+    # TODO : jit, set by delta T
     volume_size = (
         (bbox_a[3] * bbox_a[4] * bbox_a[5])
         if bbox_b is None
@@ -54,11 +65,9 @@ class Spb3DMOT(object):
     def get_param(  # "greedy"
         self, algm="hungar", metric="eiou", thres=-0.5, min_hits=1, max_age=2
     ):
-        # get parameters for each dataset
+        # if metric in ["dist_3d", "dist_2d", "m_dis"]:
+        #     thres *= -1
 
-        # add negative due to it is the cost
-        if metric in ["dist_3d", "dist_2d", "m_dis"]:
-            thres *= -1
         self.algm, self.metric, self.thres, self.max_age, self.min_hits = (
             algm,
             metric,
@@ -68,40 +77,35 @@ class Spb3DMOT(object):
         )
 
         # define max/min values for the output affinity matrix
-        if self.metric in ["dist_3d", "dist_2d", "m_dis"]:
-            self.max_sim, self.min_sim = 0.0, -100.0
-        elif self.metric in ["iou_2d", "iou_3d"]:
-            self.max_sim, self.min_sim = 1.0, 0.0
-        elif self.metric in ["giou_2d", "giou_3d"]:
-            self.max_sim, self.min_sim = 1.0, -1.0
+        # if self.metric in ["dist_3d", "dist_2d", "m_dis"]:
+        #     self.max_sim, self.min_sim = 0.0, -100.0
+        # elif self.metric in ["iou_2d", "iou_3d"]:
+        #     self.max_sim, self.min_sim = 1.0, 0.0
+        # elif self.metric in ["giou_2d", "giou_3d"]:
+        self.max_sim, self.min_sim = 1.0, -1.0
 
     def process_dets(self, dets):
         # convert each detection into the class Box3D
         # inputs:
         # 	dets - a numpy array of detections in the format [[h,w,l,x,y,z,theta],...]
         dets_new = []
+        # dets : [[42.35746765136719, 6.294949531555176, -0.6724109649658203, 0.6947809457778931, 0.6723328232765198, 1.6847240924835205, 6.3626885414123535, 0.21080490946769714, 0.5],
+        #         [-21.329811096191406, -1.3849732875823975, -1.0482765436172485, 0.6782370209693909, 0.6069652438163757, 1.665456771850586, 5.301192283630371, 0.14246301352977753, 0.5],
+        # [44.61482620239258, 4.7019829750061035, -0.48246583342552185, 0.7044910788536072, 0.6307433843612671, 1.8210793733596802, 6.282752990722656, 0.12992656230926514, 0.5]]
         for det in dets:
             det_tmp = Box3D.pcdet2bbox_raw(det)
             dets_new.append(det_tmp)
 
+        # dets_high = [det for det in dets if det[-2] > det[-1]]
+        # dets_low = [det for det in dets if det[-2] < det[-1] and det[-2] > 0.1]
         return dets_new
-
-    def within_range(self, theta):
-        # make sure the orientation is within a proper range
-
-        if theta >= np.pi:
-            theta -= np.pi * 2  # make the theta still in the range
-        if theta < -np.pi:
-            theta += np.pi * 2
-
-        return theta
 
     def orientation_correction(self, theta_pre, theta_obs):
         # update orientation in propagated tracks and detected boxes so that they are within 90 degree
 
         # make the theta still in the range
-        theta_pre = self.within_range(theta_pre)
-        theta_obs = self.within_range(theta_obs)
+        theta_pre = _within_range(theta_pre)
+        theta_obs = _within_range(theta_obs)
 
         # if the angle of two theta is not acute angle, then make it acute
         if (
@@ -109,7 +113,7 @@ class Spb3DMOT(object):
             and abs(theta_obs - theta_pre) < np.pi * 3 / 2.0
         ):
             theta_pre += np.pi
-            theta_pre = self.within_range(theta_pre)
+            theta_pre = _within_range(theta_pre)
 
         # now the angle is acute: < 90 or > 270, convert the case of > 270 to < 90
         if abs(theta_obs - theta_pre) >= np.pi * 3 / 2.0:
@@ -123,20 +127,11 @@ class Spb3DMOT(object):
     def prediction(self):
         # get predicted locations from existing tracks
         trks = []
-        for t in range(len(self.trackers)):
+        for tracker in self.trackers:
             # propagate locations
-            kf_tmp = self.trackers[t]
-            if kf_tmp.id == self.debug_id:
-                logger.info("\n before prediction")
-                logger.info(kf_tmp.ukf.x.reshape((-1)))
-                logger.info("\n current velocity")
-                logger.info(kf_tmp.get_velocity())
+            kf_tmp = tracker
             kf_tmp.ukf.predict()
-            if kf_tmp.id == self.debug_id:
-                logger.info("After prediction")
-                logger.info(kf_tmp.ukf.x.reshape((-1)))
-            kf_tmp.ukf.x[3] = self.within_range(kf_tmp.ukf.x[3])
-
+            kf_tmp.ukf.x[3] = _within_range(kf_tmp.ukf.x[3])
             # update statistics
             kf_tmp.time_since_update += 1
             trk_tmp = kf_tmp.ukf.x.reshape((-1))[:7]
@@ -164,32 +159,18 @@ class Spb3DMOT(object):
                     trk.ukf.x[3], bbox3d[3]
                 )
                 trk.ukf.R[0:, 0:] *= np.clip(0.05 * (1 - trk.confidence), 0.001, 0.1)
-                if trk.id == self.debug_id:
-                    logger.info("After ego-compoensation")
-                    logger.info(trk.ukf.x.reshape((-1)))
-                    logger.info("matched measurement")
-                    logger.info(bbox3d.reshape((-1)))
-                    logger.info("uncertainty")
-                    logger.info(trk.ukf.P)
-                    logger.info("measurement noise")
-                    logger.info(trk.ukf.R)
 
                 # kalman filter update with observation
                 trk.ukf.update(bbox3d[:-2])
                 trk.distance = get_bbox_distance(trk.ukf.x[:3])
-                if trk.id == self.debug_id:
-                    logger.info("after matching")
-                    logger.info(trk.ukf.x.reshape((-1)))
-                    logger.info("\n current velocity")
-                    logger.info(trk.get_velocity())
 
-                trk.ukf.x[3] = self.within_range(trk.ukf.x[3])
+                trk.ukf.x[3] = _within_range(trk.ukf.x[3])
             else:
                 trk.confidence -= trk.distance
                 trk.hits = False
 
     def birth(self, dets, unmatched_dets):
-        new_id_list = list()  # new ID generated for unmatched detections
+        new_id_list = []  # new ID generated for unmatched detections
         for i in unmatched_dets:  # a scalar of index
             # trk = KF(Box3D.bbox2array(dets[i]), self.ID_count[0])
             trk = UKF(Box3D.bbox2array(dets[i]), self.ID_count[0])
@@ -350,9 +331,9 @@ class Spb3DMOT(object):
         self.id_now_output = results[0][
             :, 7
         ].tolist()  # only the active tracks that are outputed
-
+        # print(f"results : {results}")
         # post-processing affinity to convert to the affinity between resulting tracklets
-        if self.affi_process:
-            affi = self.process_affi(affi, matched, unmatched_dets, new_id_list)
+        # if self.affi_process:
+        #     affi = self.process_affi(affi, matched, unmatched_dets, new_id_list)
 
         return results, affi

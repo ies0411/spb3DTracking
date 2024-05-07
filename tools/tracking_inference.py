@@ -2,10 +2,13 @@ import argparse
 import glob
 import time
 from pathlib import Path
+import os
 
 import torch
 import argparse
 import time
+import json
+
 
 import numpy as np
 import torch
@@ -51,12 +54,7 @@ def parse_config():
     )
     parser.add_argument(
         "--tracking_output_dir",
-        default="./trk_result/",
-        type=str,
-    )
-    parser.add_argument(
-        "--mot_output_dir",
-        default="./mot_result/",
+        default="./tracking_result/",
         type=str,
     )
 
@@ -187,8 +185,13 @@ def main():
                 ID_start_dict[detection_cfg.CLASS_NAMES[int(label) - 1]] = id_max + 1
                 tracking_results_dict.setdefault(label, [])
                 tracking_results_dict[label].append(tracking_result)
-    logger.info(f"tracking_results_dict : {tracking_results_dict}")
+    # logger.info(f"tracking_results_dict : {tracking_results_dict}")
     logger.info(f"tracking time : { time.time()-tracking_time}")
+    logger.info("========= logging.. =========")
+    Path(args.tracking_output_dir).mkdir(parents=True, exist_ok=True)
+
+    with open(os.path.join(args.tracking_output_dir, "result.txt"), "w") as f:
+        json.dump(tracking_results_dict, f)
     logger.info("========= Finish =========")
 
 

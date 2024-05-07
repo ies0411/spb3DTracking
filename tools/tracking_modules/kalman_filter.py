@@ -1,9 +1,9 @@
 # import numpy as np
 # from filterpy.kalman import KalmanFilter, UnscentedKalmanFilter, MerweScaledSigmaPoints
 import numpy as np
-from filterpy.kalman import (KalmanFilter, MerweScaledSigmaPoints,
-                             UnscentedKalmanFilter)
+from filterpy.kalman import KalmanFilter, MerweScaledSigmaPoints, UnscentedKalmanFilter
 from numba import jit
+
 
 @jit(nopython=True, cache=True)
 def get_bbox_distance(pose):
@@ -19,17 +19,6 @@ class Filter(object):
         self.confidence = bbox3D[-2]
         self.threshold = bbox3D[-1]
         self.distance = get_bbox_distance(bbox3D[:3])
-        # self.info = info  # other information associated
-
-
-# class Filter(object):
-#     def __init__(self, bbox3D, ID):
-
-#         self.initial_pos = bbox3D
-#         self.time_since_update = 0
-#         self.id = ID
-#         self.hits = 1  # number of total hits including the first detection
-#         # self.info = info  # other information associated
 
 
 class KF(Filter):
@@ -103,11 +92,6 @@ class KF(Filter):
         # return the object velocity in the state
 
         return self.kf.x[7:]
-
-
-
-
-
 
 
 #
