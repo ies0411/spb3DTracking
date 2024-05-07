@@ -7,7 +7,6 @@ import os
 import torch
 import argparse
 import time
-import json
 
 
 import numpy as np
@@ -18,6 +17,7 @@ from pcdet.models import build_network, load_data_to_gpu
 from pcdet.utils import common_utils
 from tracking_modules.model import Spb3DMOT
 from tracking_modules.utils import Config
+from utils.utils import read_calib
 
 
 def parse_config():
@@ -57,6 +57,11 @@ def parse_config():
         default="./tracking_result/",
         type=str,
     )
+    parser.add_argument(
+        "--calib_dir",
+        default="../sample/calib/",
+        type=str,
+    )
 
     args = parser.parse_args()
 
@@ -74,6 +79,7 @@ class TrackerDataset(DatasetTemplate):
         root_path=None,
         logger=None,
         ext=".bin",
+        args=None,
     ):
         """
         Args:
@@ -92,6 +98,7 @@ class TrackerDataset(DatasetTemplate):
         )
         self.root_path = root_path
         self.ext = ext
+        self.args = args
         data_file_list = (
             glob.glob(str(root_path / f"*{self.ext}"))
             if self.root_path.is_dir()
@@ -106,9 +113,40 @@ class TrackerDataset(DatasetTemplate):
 
     def __getitem__(self, index):
         if self.ext == ".bin":
-            points = np.fromfile(
-                self.sample_file_list[index], dtype=np.float32
-            ).reshape(-1, 4)
+            frame_idx = 0  # TODO : change to frame_id
+            P2, V2C = read_calib(
+                os.path.join(self.args.calib_dir, f"{str(frame_idx).zfill(4)}.txt")
+            )
+
+            max_row = 374  # y
+            max_col = 1241  # x
+
+            lidar = np.fromfile(self.sample_file_list[index], dtype=np.float32).reshape(
+                -1, 4
+            )
+
+            mask = lidar[:, 0] > 0
+            lidar = lidar[mask]
+
+            lidar_copy = np.zeros(shape=lidar.shape)
+            lidar_copy[:, :] = lidar[:, :]
+            velo_tocam = V2C
+            lidar[:, 3] = 1
+            lidar = np.matmul(lidar, velo_tocam.T)
+            img_pts = np.matmul(lidar, P2.T)
+            velo_tocam = np.mat(velo_tocam).I
+            velo_tocam = np.array(velo_tocam)
+            normal = velo_tocam
+            normal = normal[0:3, 0:4]
+            lidar = np.matmul(lidar, normal.T)
+            lidar_copy[:, 0:3] = lidar
+            x, y = img_pts[:, 0] / img_pts[:, 2], img_pts[:, 1] / img_pts[:, 2]
+            mask = np.logical_and(
+                np.logical_and(x >= 0, x < max_col), np.logical_and(y >= 0, y < max_row)
+            )
+            points = lidar_copy[mask]
+            # points = read_velodyne(velo_path,self.P2,self.V2C)
+
         elif self.ext == ".npy":
             points = np.load(self.sample_file_list[index])
         else:
@@ -118,15 +156,17 @@ class TrackerDataset(DatasetTemplate):
         return data_dict
 
 
-def _detection_postprocessing(pred_dicts):
+def _detection_postprocessing(pred_dicts, num_objects):
     """
     x,y,z,dx,dy,dz,rot,score
 
     """
     tracking_info_data = {}
+    for idx in range(num_objects):
+        tracking_info_data.setdefault(str(idx + 1), [])
+    # print(f"pred_dicts: {pred_dicts}")
     for idx, pred_bbox in enumerate(pred_dicts[0]["pred_boxes"]):
         label = str(pred_dicts[0]["pred_labels"][idx].item())
-        tracking_info_data.setdefault(label, [])
         pred_bbox = pred_bbox.tolist()
         pred_bbox.append(pred_dicts[0]["pred_scores"][idx].tolist())
         pred_bbox.append(0.5)
@@ -147,6 +187,7 @@ def main():
         root_path=Path(args.data_path),
         ext=args.ext,
         logger=logger,
+        args=args,
     )
     logger.info(f"Total number of samples: \t{len(tracking_dataset)}")
     model = build_network(
@@ -167,13 +208,16 @@ def main():
     tracker_dict = {}
     for class_name in detection_cfg.CLASS_NAMES:
         tracker_dict[class_name] = Spb3DMOT(ID_init=ID_start_dict.get(class_name))
-
+    for idx in range(len(detection_cfg.CLASS_NAMES)):
+        tracking_results_dict.setdefault(str(int(idx) + 1), [])
     with torch.no_grad():
         for data_dict in tracking_dataset:
             data_dict = tracking_dataset.collate_batch([data_dict])
             load_data_to_gpu(data_dict)
             pred_dicts, _ = model.forward(data_dict)
-            detection_results_dict = _detection_postprocessing(pred_dicts)
+            detection_results_dict = _detection_postprocessing(
+                pred_dicts, len(detection_cfg.CLASS_NAMES)
+            )
             # TODO : nms
             for label, pred_bboxes in detection_results_dict.items():
                 id_max = 0
@@ -183,17 +227,54 @@ def main():
                 if len(tracking_result) != 0:
                     id_max = max(id_max, tracking_result[0][-1])
                 ID_start_dict[detection_cfg.CLASS_NAMES[int(label) - 1]] = id_max + 1
-                tracking_results_dict.setdefault(label, [])
                 tracking_results_dict[label].append(tracking_result)
-    # logger.info(f"tracking_results_dict : {tracking_results_dict}")
+    # print(f"tracking_results_dict : {tracking_results_dict}")
     logger.info(f"tracking time : { time.time()-tracking_time}")
     logger.info("========= logging.. =========")
     Path(args.tracking_output_dir).mkdir(parents=True, exist_ok=True)
 
     with open(os.path.join(args.tracking_output_dir, "result.txt"), "w") as f:
-        json.dump(tracking_results_dict, f)
+        for class_name, tracking_results in tracking_results_dict.items():
+            tracking_results = tracking_results[0]
+            for frame_idx, tracking_result in enumerate(tracking_results):
+                # box2d = bb3d_2_bb2d(box, P2)
+                f.write(
+                    f"{str(frame_idx)} {detection_cfg.CLASS_NAMES[int(class_name) - 1]} -1 -1 -10 -1 -1 -1 -1 {str(tracking_result[0])} {str(tracking_result[1])} {str(tracking_result[2])} {str(tracking_result[3])} {str(tracking_result[4])} {str(tracking_result[5])} {str(tracking_result[6])} \n"
+                )
+        # json.dump(tracking_results_dict, f)
     logger.info("========= Finish =========")
 
 
+# https://github.com/pratikac/kitti/blob/master/readme.tracking.txt
+# frame, track_id, type, truncated, occluded, alpha, bbox(2d-left,top,right,bottom), dimensions(height,width,lennth), location(3d-x,y,z), rotation_y, score
+# 0 2 Pedestrian 0 0 -2.523309 (1106.137292 166.576807 1204.470628 323.876144) (1.714062 0.767881 0.972283) (6.301919 1.652419 8.455685) -1.900245
 if __name__ == "__main__":
     main()
+
+    # with open(save_name,'w+') as f:
+    #     for i in range(len(dataset)):
+    #         P2, V2C, points, image, _, _, pose = dataset[i]
+    #         new_pose = np.mat(pose).I
+    #         if i in frame_first_dict.keys():
+    #             objects = frame_first_dict[i]
+
+    #             for ob_id in objects.keys():
+    #                 updated_state,score = objects[ob_id]
+
+    #                 box_template = np.zeros(shape=(1,7))
+    #                 box_template[0,0:3]=updated_state[0,0:3]
+    #                 box_template[0,3:7]=updated_state[0,9:13]
+
+    #                 box = register_bbs(box_template,new_pose)
+
+    #                 box[:, 6] = -box[:, 6] - np.pi / 2
+    #                 box[:, 2] -= box[:, 5] / 2
+    #                 box[:,0:3] = velo_to_cam(box[:,0:3],V2C)[:,0:3]
+
+    #                 box = box[0]
+
+    #                 box2d = bb3d_2_bb2d(box,P2)
+
+    #                 print('%d %d %s -1 -1 -10 %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f'
+    #                       % (i,ob_id,tracking_type,box2d[0][0],box2d[0][1],box2d[0][2],
+    #                          box2d[0][3],box[5],box[4],box[3],box[0],box[1],box[2],box[6],score),file = f)
