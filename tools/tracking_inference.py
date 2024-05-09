@@ -235,24 +235,22 @@ def main():
 
     frame_idx = 0  # TODO : change to frame_id
     P2, V2C = read_calib(os.path.join(args.calib_dir, f"{str(frame_idx).zfill(4)}.txt"))
-
     with open(os.path.join(args.tracking_output_dir, "result.txt"), "w") as f:
         for class_name, tracking_results in tracking_results_dict.items():
             for frame_idx, tracking_result in enumerate(tracking_results):
                 if len(tracking_result) == 0:
                     continue
                 tracking_result = tracking_result[0]
-                # box[:, 6] = -box[:, 6] - np.pi / 2
                 box = copy.deepcopy(tracking_result)
                 box[:3] = tracking_result[3:6]
                 box[3:6] = tracking_result[:3]
                 box[2] -= box[5] / 2
-                box[:3] = vel_to_cam_pose(box[:3], V2C)
+                # box[:, 6] = -box[:, 6] - np.pi / 2
+                box[:3] = vel_to_cam_pose(box[:3], V2C)[:3]
                 box2d = bb3d_2_bb2d(box, P2)
                 f.write(
-                    f"{str(frame_idx)} {str(int(tracking_result[-1]))} {detection_cfg.CLASS_NAMES[int(class_name) - 1]} -1 -1 -10 {box2d[0][0]} {box2d[0][1]} {box2d[0][2]} {box2d[0][3]} {str(tracking_result[0])} {str(tracking_result[1])} {str(tracking_result[2])} {str(tracking_result[3])} {str(tracking_result[4])} {str(tracking_result[5])} {str(tracking_result[6])} \n"
+                    f"{str(frame_idx)} {str(int(tracking_result[-1]))} {detection_cfg.CLASS_NAMES[int(class_name) - 1]} -1 -1 -10 {box2d[0][0]} {box2d[0][1]} {box2d[0][2]} {box2d[0][3]} {str(box[3])} {str(box[4])} {str(box[5])} {str(box[0])} {str(box[1])} {str(box[2])} {str(box[6])} \n"
                 )
-        # json.dump(tracking_results_dict, f)
     logger.info("========= Finish =========")
 
 
@@ -261,31 +259,3 @@ def main():
 # 0 2 Pedestrian 0 0 -2.523309 (1106.137292 166.576807 1204.470628 323.876144) (1.714062 0.767881 0.972283) (6.301919 1.652419 8.455685) -1.900245
 if __name__ == "__main__":
     main()
-
-    # with open(save_name,'w+') as f:
-    #     for i in range(len(dataset)):
-    #         P2, V2C, points, image, _, _, pose = dataset[i]
-    #         new_pose = np.mat(pose).I
-    #         if i in frame_first_dict.keys():
-    #             objects = frame_first_dict[i]
-
-    #             for ob_id in objects.keys():
-    #                 updated_state,score = objects[ob_id]
-
-    #                 box_template = np.zeros(shape=(1,7))
-    #                 box_template[0,0:3]=updated_state[0,0:3]
-    #                 box_template[0,3:7]=updated_state[0,9:13]
-
-    #                 box = register_bbs(box_template,new_pose)
-
-    #                 box[:, 6] = -box[:, 6] - np.pi / 2
-    #                 box[:, 2] -= box[:, 5] / 2
-    #                 box[:,0:3] = velo_to_cam(box[:,0:3],V2C)[:,0:3]
-
-    #                 box = box[0]
-
-    #                 box2d = bb3d_2_bb2d(box,P2)
-
-    #                 print('%d %d %s -1 -1 -10 %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f'
-    #                       % (i,ob_id,tracking_type,box2d[0][0],box2d[0][1],box2d[0][2],
-    #                          box2d[0][3],box[5],box[4],box[3],box[0],box[1],box[2],box[6],score),file = f)

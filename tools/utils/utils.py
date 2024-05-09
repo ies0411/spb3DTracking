@@ -26,7 +26,7 @@ def read_calib(calib_path):
                 R0 = R0.reshape((3, 3))
                 R0 = np.concatenate([R0, [[0], [0], [0]]], -1)
                 R0 = np.concatenate([R0, [[0, 0, 0, 1]]])
-    # vtc_mat = np.matmul(R0, vtc_mat)
+    vtc_mat = np.matmul(R0, vtc_mat)
     return (P2, vtc_mat)
 
 
@@ -95,16 +95,9 @@ output: (PointsNum,3)
 
 def vel_to_cam_pose(box, vtc_mat):
     box.append(1)
-    # print(f"box : {box}")
     mat = np.array(box)
-    # mat = np.mat(mat)
-    # normal = np.mat(vtc_mat)
-    # normal = normal[0:3, 0:4]
-    # print(box)
-    # print(vtc_mat)
     transformed_mat = vtc_mat @ mat.T
     T = np.array(transformed_mat.T, dtype=np.float32)
-    # print(T)
     return T
 
 
@@ -156,8 +149,8 @@ def bb3d_2_bb2d(bb3d, P2):
         bb3d[0],
         bb3d[1],
         bb3d[2],
-        bb3d[3],
         bb3d[4],
+        bb3d[3],
         bb3d[5],
         bb3d[6],
     )
