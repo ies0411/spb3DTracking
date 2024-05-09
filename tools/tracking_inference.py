@@ -3,6 +3,7 @@ import glob
 import time
 from pathlib import Path
 import os
+import natsort
 
 import torch
 import argparse
@@ -31,9 +32,10 @@ def parse_config():
     parser.add_argument(
         "--data_path",
         type=str,
-        default="../sample/1",
+        default="../sample/lidar",
         help="specify the point cloud data file or directory",
     )
+    # /mnt/nas3/Data/kitti-processed/object_tracking/training/velodyne/
     parser.add_argument(
         "--ckpt",
         default="/mnt/nas2/users/eslim/result_log/generalization/pvrcnnplus_anchor_230930_r/ckpt/latest_model.pth",
@@ -99,29 +101,38 @@ class TrackerDataset(DatasetTemplate):
         self.root_path = root_path
         self.ext = ext
         self.args = args
-        data_file_list = (
-            glob.glob(str(root_path / f"*{self.ext}"))
-            if self.root_path.is_dir()
-            else [self.root_path]
-        )
-
-        data_file_list.sort()
-        self.sample_file_list = data_file_list
+        path_list = os.listdir(root_path)
+        path_list = natsort.natsorted(path_list)
+        self.num_file_list = []
+        self.lidar_files = []
+        for dir_path in path_list:
+            files = os.listdir(os.path.join(root_path, dir_path))
+            files = natsort.natsorted(files)
+            self.num_file_list.append(len(files))
+            for file in files:
+                self.lidar_files.append(os.path.join(root_path, dir_path, file))
 
     def __len__(self):
-        return len(self.sample_file_list)
+        return len(self.lidar_files) - 1
 
     def __getitem__(self, index):
+        reduced_index = 0
+        print(index)
+        for idx in range(len(self.num_file_list)):
+            reduced_index += self.num_file_list[idx]
+            if index < reduced_index:
+                frame_idx = idx
+                break
+
+        P2, V2C = read_calib(
+            os.path.join(self.args.calib_dir, f"{str(frame_idx).zfill(4)}.txt")
+        )
         if self.ext == ".bin":
-            frame_idx = 0  # TODO : change to frame_id
-            P2, V2C = read_calib(
-                os.path.join(self.args.calib_dir, f"{str(frame_idx).zfill(4)}.txt")
-            )
 
             max_row = 374  # y
             max_col = 1241  # x
 
-            lidar = np.fromfile(self.sample_file_list[index], dtype=np.float32).reshape(
+            lidar = np.fromfile(self.lidar_files[index], dtype=np.float32).reshape(
                 -1, 4
             )
 
@@ -135,12 +146,12 @@ class TrackerDataset(DatasetTemplate):
             lidar = np.matmul(lidar, velo_tocam.T)
             img_pts = np.matmul(lidar, P2.T)
 
-            # velo_tocam = np.mat(velo_tocam).I
-            # velo_tocam = np.array(velo_tocam)
-            # normal = velo_tocam
-            # normal = normal[0:3, 0:4]
-            # lidar = np.matmul(lidar, normal.T)
-            # lidar_copy[:, 0:3] = lidar
+            velo_tocam = np.mat(velo_tocam).I
+            velo_tocam = np.array(velo_tocam)
+            normal = velo_tocam
+            normal = normal[0:3, 0:4]
+            lidar = np.matmul(lidar, normal.T)
+            lidar_copy[:, 0:3] = lidar
             x, y = img_pts[:, 0] / img_pts[:, 2], img_pts[:, 1] / img_pts[:, 2]
             mask = np.logical_and(
                 np.logical_and(x >= 0, x < max_col), np.logical_and(y >= 0, y < max_row)
@@ -149,7 +160,8 @@ class TrackerDataset(DatasetTemplate):
             # points = read_velodyne(velo_path,self.P2,self.V2C)
 
         elif self.ext == ".npy":
-            points = np.load(self.sample_file_list[index])
+            pass
+            # points = np.load(self.sample_file_list[index])
         else:
             raise NotImplementedError
         input_dict = {"points": points, "frame_id": index}
